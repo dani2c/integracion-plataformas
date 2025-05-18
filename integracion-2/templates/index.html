@@ -1,0 +1,61 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>Gestión de Ventas</title>
+    <link rel="stylesheet" href="{{ url_for('static', filename='styles/styles.css') }}">
+</head>
+<body>
+
+    <div class="container">
+        <h2>Gestión de Ventas</h2>
+
+        <!-- Buscador -->
+        <input type="text" placeholder="Buscar sucursal..." id="buscar" />
+
+        <!-- Sucursales -->
+        <h3>Sucursales</h3>
+        <div id="sucursales-container">
+            <!-- Dinámicamente se rellenará con JS -->
+        </div>
+
+        <div class="separador"></div>
+
+        <!-- Casa Matriz -->
+        <h3>Casa Matriz</h3>
+        <div id="casa-matriz-container">
+            <!-- Se carga dinámicamente -->
+        </div>
+
+        <div class="separador"></div>
+
+        <!-- Formulario de venta -->
+        <h3>Realizar Venta</h3>
+
+        <label for="sucursal">Seleccione origen:</label>
+        <select id="sucursal">
+            <option value="1">Sucursal 1</option>
+            <option value="2">Sucursal 2</option>
+            <option value="3">Sucursal 3</option>
+            <option value="casa_matriz">Casa Matriz</option>
+        </select>
+
+        <label for="cantidad">Cantidad:</label>
+        <input type="number" id="cantidad" placeholder="Ingrese cantidad" min="1" />
+
+        <button id="calcular">Calcular Total</button>
+
+        <div class="total">
+            Total en CLP: <span id="total">-</span>
+        </div>
+        <div class="total">
+            Total en USD: <span id="totalUSD">-</span>
+        </div>
+
+        <button id="vender">Realizar Venta</button>
+    </div>
+
+    <script src="{{ url_for('static', filename='js/app.js') }}"></script>
+</body>
+</html>

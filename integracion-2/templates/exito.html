@@ -1,0 +1,25 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+    <meta charset="UTF-8">
+    <title>Venta Exitosa</title>
+    <link rel="stylesheet" href="{{ url_for('static', filename='styles/styles.css') }}">
+</head>
+<body>
+    <div class="container">
+        <h2>¡Venta Exitosa!</h2>
+        
+        {% if transaccion %}
+            <div class="transaction-details">
+                <p><strong>Monto:</strong> ${{ transaccion.amount | round | int }}</p>
+                <p><strong>Código de autorización:</strong> {{ transaccion.respuesta.authorization_code }}</p>
+                <p><strong>Estado:</strong> {{ transaccion.status }}</p>
+            </div>
+        {% else %}
+            <p>No se encontraron detalles de la transacción</p>
+        {% endif %}
+        
+        <a href="{{ url_for('index') }}" class="btn-volver">Volver al inicio</a>
+    </div>
+</body>
+</html>
