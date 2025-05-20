@@ -2,23 +2,16 @@
 <html lang="es">
 <head>
     <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1">
-    <title>Error en el Pago</title>
+    <title>Error en la Venta</title>
     <link rel="stylesheet" href="{{ url_for('static', filename='styles/styles.css') }}">
 </head>
 <body>
     <div class="container">
-        <h2>Error en el Proceso de Pago</h2>
-        
-        <div class="error-message">
-            <p>Ocurrió un error durante el proceso de pago:</p>
-            <p class="error-detail">{{ error }}</p>
-            
-            <div class="actions">
-                <a href="{{ url_for('index') }}" class="btn-volver">Volver al Inicio</a>
-                <a href="mailto:soporte@tutienda.com" class="btn-soporte">Contactar Soporte</a>
-            </div>
+        <h2>¡Error en la Venta!</h2>
+        <div class="error-details">
+            <p>{{ error }}</p>
         </div>
+        <a href="{{ url_for('index') }}" class="btn-volver">Volver al inicio</a>
     </div>
 </body>
 </html>

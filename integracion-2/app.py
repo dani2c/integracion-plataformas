@@ -12,7 +12,7 @@ from transbank.webpay.webpay_plus.transaction import Transaction
 # CONFIGURACIÓN INICIAL DE FLASK
 # ======================================================
 app = Flask(__name__)
-app.config['SQLALCHEMY_DATABASE_URI'] = 'sqlite:///D:\\proyecto\\integracion\\inventario_db.db'
+app.config['SQLALCHEMY_DATABASE_URI'] = 'sqlite:///D:\\proyecto\\integracion-2\\inventario_db.db'
 app.config['SQLALCHEMY_TRACK_MODIFICATIONS'] = False
 db = SQLAlchemy(app)
 
@@ -80,61 +80,71 @@ class MockTransaction:
     def commit(self, token):
         print(f"\n--- Mock commit con token: {token} ---")
         
-        # Buscar la transacción por token
-        transaccion = None
-        for t in Transaccion.query.all():
-            try:
-                respuesta = json.loads(t.respuesta)
-                if respuesta.get('token') == token:
-                    transaccion = t
-                    break
-            except:
-                continue
+        # Buscar transacción
+        transaccion = Transaccion.query.filter(
+            Transaccion.respuesta.like(f'%{token}%')
+        ).first()
         
         if not transaccion:
             raise Exception(f"Transacción no encontrada con token: {token}")
         
-        # Extraer datos
         respuesta = json.loads(transaccion.respuesta)
         sucursal_id = respuesta.get('sucursal_id')
         cantidad = int(respuesta.get('cantidad', 0))
         
-        print(f"Transacción encontrada: ID={transaccion.id}, Sucursal={sucursal_id}, Cantidad={cantidad}")
-        
-        # DESCONTAR STOCK SOLO SI NO ESTÁ YA AUTORIZADA
-        if transaccion.status != 'AUTHORIZED':
-            try:
-                if sucursal_id == "casa_matriz":
-                    casa_matriz = CasaMatriz.query.first()
-                    if casa_matriz and casa_matriz.cantidad >= cantidad:
-                        casa_matriz.cantidad -= cantidad
-                        print(f"Stock casa matriz descontado: {casa_matriz.cantidad}")
-                else:
-                    sucursal = Sucursal.query.get(int(sucursal_id))
-                    if sucursal and sucursal.cantidad >= cantidad:
-                        sucursal.cantidad -= cantidad
-                        print(f"Stock sucursal {sucursal.id} descontado: {sucursal.cantidad}")
-                
-                # Actualizar transacción
-                transaccion.status = 'AUTHORIZED'
-                transaccion.respuesta = json.dumps({
-                    "status": "AUTHORIZED",
-                    "amount": transaccion.amount,
-                    "authorization_code": "123456",
-                    "sucursal_id": sucursal_id,
-                    "cantidad": cantidad,
-                    "token": token
-                })
-                db.session.commit()
-            except Exception as e:
-                print(f"ERROR AL DESCONTAR STOCK: {str(e)}")
-                traceback.print_exc()
-        
-        return type('obj', (object,), {
-            'status': 'AUTHORIZED',
-            'amount': transaccion.amount,
-            'authorization_code': '123456'
-        })
+        try:
+            # Validar stock
+            if sucursal_id == "casa_matriz":
+                casa_matriz = CasaMatriz.query.first()
+                if casa_matriz.cantidad < cantidad:
+                    raise Exception(f"Stock insuficiente en Casa Matriz. Disponible: {casa_matriz.cantidad}")
+            else:
+                sucursal = Sucursal.query.get(int(sucursal_id))
+                if not sucursal:
+                    raise Exception("Sucursal no existe")
+                if sucursal.cantidad < cantidad:
+                    raise Exception(f"Stock insuficiente en {sucursal.nombre}. Disponible: {sucursal.cantidad}")
+            
+            # Descontar stock
+            if sucursal_id == "casa_matriz":
+                casa_matriz.cantidad -= cantidad
+            else:
+                sucursal.cantidad -= cantidad
+            
+            # Marcar como exitosa
+            transaccion.status = 'AUTHORIZED'
+            transaccion.respuesta = json.dumps({
+                "status": "AUTHORIZED",
+                "amount": transaccion.amount,
+                "authorization_code": "123456",
+                "sucursal_id": sucursal_id,
+                "cantidad": cantidad,
+                "token": token
+            })
+            db.session.commit()
+            
+            # Redirigir a éxito
+            return type('obj', (object,), {
+                'status': 'AUTHORIZED',
+                'url': url_for('venta_exitosa', token=token)
+            })
+            
+        except Exception as e:
+            # Marcar como fallida
+            transaccion.status = 'RECHAZADA'
+            transaccion.respuesta = json.dumps({
+                "error": str(e),
+                "status": "RECHAZADA"
+            })
+            db.session.commit()
+            
+            # Redirigir directamente a error
+            return type('obj', (object,), {
+                'status': 'FAILED',
+                'url': url_for('venta_fallida', error=str(e))
+            })
+
+
 
 # Inicialización de webpay_transaction (IMPORTANTE: debe definirse ANTES de las rutas)
 if os.getenv('MOCK_TRANSBANK', 'false').lower() == 'true':
@@ -207,14 +217,14 @@ def vender():
         if sucursal_id == "casa_matriz":
             casa_matriz = CasaMatriz.query.first()
             if casa_matriz.cantidad < cantidad:
-                return jsonify({"error": "Stock insuficiente en Casa Matriz"}), 400
+                return jsonify({"error": f"Stock insuficiente en Casa Matriz (disponible: {casa_matriz.cantidad})"}), 400
             casa_matriz.cantidad -= cantidad
         else:
             sucursal = Sucursal.query.get(sucursal_id)
             if not sucursal:
                 return jsonify({"error": "Sucursal no encontrada"}), 404
             if sucursal.cantidad < cantidad:
-                return jsonify({"error": "Stock insuficiente en sucursal"}), 400
+                return jsonify({"error": f"Stock insuficiente en {sucursal.nombre} (disponible: {sucursal.cantidad})"}), 400
             sucursal.cantidad -= cantidad
         
         db.session.commit()
@@ -227,6 +237,8 @@ def vender():
         db.session.rollback()
         return jsonify({"error": str(e)}), 500
 
+
+
 # ======================================================
 # RUTAS DE INTEGRACIÓN TRANSBANK
 # ======================================================
@@ -236,13 +248,15 @@ def mock_pago_exitoso():
     return f'''
     <html>
         <body style="padding: 20px; font-family: Arial;">
-            <h2>Pago Simulado Exitoso</h2>
-            <p>¡Transacción completada correctamente!</p>
-            <p>Token: {token}</p>
-            <p><a href="/webpay/confirmar?token_ws={token}">Continuar</a></p>
+            <h2>Procesando Pago...</h2>
+            <script>
+                // Redirigir automáticamente al endpoint de confirmación
+                window.location.href = "/webpay/confirmar?token_ws={token}";
+            </script>
         </body>
     </html>
     '''
+
 
 
 @app.route('/webpay/iniciar', methods=['POST'])
@@ -286,48 +300,37 @@ def webpay_confirmar():
         token = request.args.get('token_ws', 'mock_token_123')
         print(f"\n--- Confirmando transacción con token: {token} ---")
         
-        # Delegar al commit de webpay_transaction
         response = webpay_transaction.commit(token)
-        print(f"Transacción confirmada: {response.status}")
         
-        return redirect(url_for('venta_exitosa', token=token))
+        # Si es mock, response.url contiene la ruta correcta (éxito o error)
+        if hasattr(response, 'url'):
+            return redirect(response.url)
+        else:
+            return redirect(url_for('venta_exitosa', token=token))
 
     except Exception as e:
-        print(f"Error en confirmar: {str(e)}")
-        traceback.print_exc()
-        return redirect(url_for('venta_fallida', error=str(e)))
+        error_msg = f"Error al confirmar pago: {str(e)}"
+        return redirect(url_for('venta_fallida', error=error_msg))
+
+
 
 @app.route('/venta-exitosa')
 def venta_exitosa():
     token = request.args.get('token')
-    print(f"\n--- Venta exitosa con token: {token} ---")
+    transaccion = Transaccion.query.filter(
+        Transaccion.respuesta.like(f'%{token}%')
+    ).first()
     
-    # Buscar solo la transacción más reciente con ese token
-    transacciones = Transaccion.query.filter(
-        Transaccion.fecha > datetime.now().replace(hour=0, minute=0, second=0)
-    ).order_by(Transaccion.fecha.desc()).all()
+    if not transaccion:
+        return redirect(url_for('venta_fallida', error="Transacción no encontrada"))
     
-    for t in transacciones:
-        try:
-            respuesta = json.loads(t.respuesta)
-            if respuesta.get('token') == token:
-                print(f"Transacción encontrada: ID={t.id}, Estado={t.status}")
-                
-                # Verificar que tenga los datos necesarios
-                if 'sucursal_id' not in respuesta or 'cantidad' not in respuesta:
-                    print(f"Transacción {t.id} sin datos completos, continuando...")
-                    continue
-                    
-                # Acceder con seguridad a los datos
-                sucursal_id = respuesta.get('sucursal_id')
-                print(f"Sucursal afectada: {sucursal_id}")
-                
-                return render_template('exito.html', transaccion=t, respuesta=respuesta)
-        except Exception as e:
-            print(f"Error procesando transacción {t.id}: {str(e)}")
-            continue
+    respuesta = json.loads(transaccion.respuesta)
     
-    return redirect(url_for('venta_fallida', error="Transacción no encontrada o datos incompletos"))
+    if transaccion.status == 'RECHAZADA':
+        return redirect(url_for('venta_fallida', error=respuesta.get('error', 'Error desconocido')))
+    
+    return render_template('exito.html', transaccion=transaccion, respuesta=respuesta)
+
 
 @app.route('/venta-fallida')
 def venta_fallida():

@@ -70,11 +70,11 @@ function actualizarSelectSucursales(sucursales) {
         option.textContent = sucursal.nombre;
         select.appendChild(option);
     });
-    // Agrega la opción de Casa Matriz
+    /** Agrega la opción de Casa Matriz
     const optionMatriz = document.createElement('option');
     optionMatriz.value = 'casa_matriz';
     optionMatriz.textContent = 'Casa Matriz';
-    select.appendChild(optionMatriz);
+    select.appendChild(optionMatriz);  */
 }
 
 // Permite filtrar sucursales por nombre
@@ -128,6 +128,11 @@ async function iniciarPago() {
     const cantidad = parseInt(document.getElementById('cantidad').value);
     const total = parseFloat(document.getElementById('total').textContent);
 
+    if (isNaN(total) || total <= 0) {
+        alert('Calcule el total primero');
+        return;
+    }
+
     try {
         const response = await fetch('/webpay/iniciar', {
             method: 'POST',
@@ -139,6 +144,11 @@ async function iniciarPago() {
             })
         });
         
+        if (!response.ok) {
+            const errorData = await response.json();
+            throw new Error(errorData.error || 'Error al iniciar el pago');
+        }
+        
         const data = await response.json();
         if (data.url) {
             window.location.href = data.url;
@@ -149,7 +159,37 @@ async function iniciarPago() {
 }
 
 
+
 window.addEventListener('pageshow', function(event) {
     cargarInventario();
 });
 
+async function vender() {
+    const sucursalId = document.getElementById('sucursal').value;
+    const cantidad = parseInt(document.getElementById('cantidad').value);
+
+    try {
+        const response = await fetch('/api/vender', {
+            method: 'POST',
+            headers: {'Content-Type': 'application/json'},
+            body: JSON.stringify({
+                sucursal_id: sucursalId,
+                cantidad: cantidad
+            })
+        });
+
+        const data = await response.json();
+        
+        if (!response.ok) {
+            throw new Error(data.error || 'Error desconocido');
+        }
+
+        alert(data.mensaje);
+        cargarInventario();  // Actualiza el inventario en pantalla
+
+    } catch (error) {
+        alert(error.message);
+        // O redirige a la página de error con el mensaje
+        window.location.href = `/venta-fallida?error=${encodeURIComponent(error.message)}`;
+    }
+}
