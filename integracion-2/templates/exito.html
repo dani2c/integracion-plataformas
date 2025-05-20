@@ -1,25 +1,41 @@
 <!DOCTYPE html>
 <html lang="es">
 <head>
-    <meta charset="UTF-8">
-    <title>Venta Exitosa</title>
-    <link rel="stylesheet" href="{{ url_for('static', filename='styles/styles.css') }}">
+<meta charset="UTF-8">
+<title>Venta Exitosa</title>
+<link rel="stylesheet" href="{{ url_for('static', filename='styles/styles.css') }}">
 </head>
 <body>
-    <div class="container">
-        <h2>¡Venta Exitosa!</h2>
-        
-        {% if transaccion %}
-            <div class="transaction-details">
-                <p><strong>Monto:</strong> ${{ transaccion.amount | round | int }}</p>
-                <p><strong>Código de autorización:</strong> {{ transaccion.respuesta.authorization_code }}</p>
-                <p><strong>Estado:</strong> {{ transaccion.status }}</p>
-            </div>
-        {% else %}
-            <p>No se encontraron detalles de la transacción</p>
-        {% endif %}
-        
-        <a href="{{ url_for('index') }}" class="btn-volver">Volver al inicio</a>
-    </div>
+<div class="container">
+<h2>¡Venta Exitosa!</h2>
+
+{% if transaccion and transaccion.respuesta %}
+{% set respuesta = transaccion.respuesta|fromjson %}
+<div class="transaction-details">
+    <p><strong>Monto:</strong> ${{ transaccion.amount | round | int }}</p>
+    <p><strong>Productos:</strong> {{ respuesta.cantidad }}</p>
+    <p><strong>Sucursal:</strong> {{ respuesta.sucursal_id }}</p>
+</div>
+{% else %}
+<p>No se encontraron detalles de la transacción</p>
+{% endif %}
+
+<a href="{{ url_for('index') }}" class="btn-volver">Volver al inicio</a>
+</div>
+
+<script>
+    // Forzar recarga del inventario al volver al inicio
+    document.addEventListener('DOMContentLoaded', function() {
+        const btnVolver = document.querySelector('.btn-volver');
+        if (btnVolver) {
+            btnVolver.addEventListener('click', function(e) {
+                e.preventDefault();
+                fetch('/api/inventario?timestamp=' + new Date().getTime())
+                    .then(() => window.location.href = "{{ url_for('index') }}");
+            });
+        }
+    });
+</script>
+
 </body>
 </html>

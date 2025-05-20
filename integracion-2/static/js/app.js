@@ -12,15 +12,23 @@ let inventario = {
 
 // Carga el inventario desde el backend y actualiza la vista y el select
 function cargarInventario() {
-    fetch('/api/inventario')
+    // Agrega parámetro anti-cache
+    fetch(`/api/inventario?timestamp=${new Date().getTime()}`)
         .then(response => response.json())
         .then(data => {
             inventario = data;
             mostrarInventario(data);
             actualizarSelectSucursales(data.sucursales);
         })
-        .catch(error => console.error('Error al cargar inventario:', error));
+        .catch(error => console.error('Error:', error));
 }
+
+// Agrega evento para recargar al regresar a la página
+window.addEventListener('pageshow', function(event) {
+    if (event.persisted) { // Si viene de cache
+        cargarInventario();
+    }
+});
 
 // Muestra la lista de sucursales y la casa matriz en pantalla
 function mostrarInventario(data) {
@@ -116,35 +124,32 @@ async function calcularTotal() {
 
 // Inicia el pago con Transbank
 async function iniciarPago() {
+    const sucursalId = document.getElementById('sucursal').value;
+    const cantidad = parseInt(document.getElementById('cantidad').value);
     const total = parseFloat(document.getElementById('total').textContent);
-    if (isNaN(total) || total <= 0) {
-        alert('Calcule el total primero');
-        return;
-    }
 
     try {
         const response = await fetch('/webpay/iniciar', {
             method: 'POST',
             headers: {'Content-Type': 'application/json'},
-            body: JSON.stringify({total: total})
+            body: JSON.stringify({
+                total: total,
+                sucursal_id: sucursalId,
+                cantidad: cantidad
+            })
         });
         
-        const responseText = await response.text();
-        if (!response.ok) {
-            throw new Error(`HTTP ${response.status}: ${responseText}`);
-        }
-        
-        const data = JSON.parse(responseText);
+        const data = await response.json();
         if (data.url) {
             window.location.href = data.url;
-        } else {
-            throw new Error('Respuesta inesperada del servidor');
         }
-        
     } catch (error) {
-        alert('Error al iniciar pago: ' + error.message);
-        console.error('Detalles del error:', error);
+        alert('Error: ' + error.message);
     }
 }
 
+
+window.addEventListener('pageshow', function(event) {
+    cargarInventario();
+});
 

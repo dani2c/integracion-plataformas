@@ -1,72 +1,24 @@
+import os
+import json
 import traceback
+from datetime import datetime
 from flask import Flask, jsonify, request, render_template, url_for, redirect
 from flask_sqlalchemy import SQLAlchemy
-from sqlalchemy import text, JSON
-from datetime import datetime
-# Corrección de imports (versión 6.x)
 from transbank.common.options import Options as BaseOptions
 from transbank.common.integration_type import IntegrationType
 from transbank.webpay.webpay_plus.transaction import Transaction
-import os
-from unittest.mock import Mock  
-import sqlite3
-import json
 
-
+# ======================================================
+# CONFIGURACIÓN INICIAL DE FLASK
+# ======================================================
 app = Flask(__name__)
 app.config['SQLALCHEMY_DATABASE_URI'] = 'sqlite:///D:\\proyecto\\integracion\\inventario_db.db'
 app.config['SQLALCHEMY_TRACK_MODIFICATIONS'] = False
 db = SQLAlchemy(app)
 
-webpay_transaction = None
-
-def configurar_transbank():
-    global webpay_transaction
-    
-    if os.getenv('MOCK_TRANSBANK', 'false').lower() == 'true':
-        # Mock
-        class MockTransaction:
-            def create(self, buy_order, session_id, amount, return_url):
-                return type('obj', (object,), {
-                    'token': 'mock_token_123',
-                    'url': url_for('mock_pago_exitoso', _external=True)
-                })
-            
-            def commit(self, token):
-                return type('obj', (object,), {
-                    'status': 'AUTHORIZED',
-                    'buy_order': 'mock_order_123',
-                    # ... (otros campos mock)
-                })
-        
-        webpay_transaction = MockTransaction()
-        print("\n--- MODO MOCK ACTIVADO ---\n")
-    
-    else:
-        # Configuración real
-        from transbank.common.options import Options as BaseOptions
-        from transbank.common.integration_type import IntegrationType
-        from transbank.webpay.webpay_plus.transaction import Transaction
-
-        class WebpayOptions(BaseOptions):
-            def header_api_key_name(self):
-                return "Tbk-Api-Key-Secret"
-            
-            def header_commerce_code_name(self):
-                return "Tbk-Api-Key-Id"
-
-        webpay_options = WebpayOptions(
-            commerce_code="597055555532",
-            api_key="579B532A7440BB0C9079DED94D31EA1615BACEB56610332264630D42D0A36B1C",
-            integration_type=IntegrationType.TEST
-        )
-        webpay_transaction = Transaction(webpay_options)
-        print("\n--- MODO REAL g ACTIVADO ---\n")
-        
-configurar_transbank()
-
-
-# Modelos de la base de datos (mantener igual)
+# ======================================================
+# MODELOS DE BASE DE DATOS
+# ======================================================
 class Sucursal(db.Model):
     id = db.Column(db.Integer, primary_key=True)
     nombre = db.Column(db.String(50), nullable=False)
@@ -84,28 +36,138 @@ class Transaccion(db.Model):
     amount = db.Column(db.Float)
     status = db.Column(db.String(20))
     fecha = db.Column(db.DateTime, default=datetime.utcnow)
-    respuesta = db.Column(db.Text)  # Usar JSON de SQLAlchemy
+    respuesta = db.Column(db.Text)  # Texto JSON serializado
+
+# ======================================================
+# CONFIGURACIÓN TRANSBANK (MOCK O REAL)
+# ======================================================
+class MockTransaction:
+    def create(self, buy_order, session_id, amount, return_url):
+        # Crear token único con el timestamp
+        unique_token = f"mock_token_{buy_order}"
+        
+        data = request.get_json()
+        sucursal_id = data.get('sucursal_id')
+        cantidad = int(data.get('cantidad', 0))
+        
+        print(f"\n--- Mock create ---")
+        print(f"Buy Order: {buy_order}")
+        print(f"Token: {unique_token}")
+        print(f"Sucursal: {sucursal_id}")
+        print(f"Cantidad: {cantidad}")
+        
+        transaccion = Transaccion(
+            buy_order=buy_order,
+            amount=amount,
+            status='INICIADA',
+            respuesta=json.dumps({
+                "token": unique_token,  # Token único
+                "url": url_for('mock_pago_exitoso', _external=True),
+                "sucursal_id": sucursal_id,
+                "cantidad": cantidad
+            }),
+            fecha=datetime.now()
+        )
+        db.session.add(transaccion)
+        db.session.commit()
+        
+        return type('obj', (object,), {
+            'token': unique_token,  # Devolver token único
+            'url': url_for('mock_pago_exitoso', token=unique_token)  # Pasar token a la página
+        })
+
     
+    def commit(self, token):
+        print(f"\n--- Mock commit con token: {token} ---")
+        
+        # Buscar la transacción por token
+        transaccion = None
+        for t in Transaccion.query.all():
+            try:
+                respuesta = json.loads(t.respuesta)
+                if respuesta.get('token') == token:
+                    transaccion = t
+                    break
+            except:
+                continue
+        
+        if not transaccion:
+            raise Exception(f"Transacción no encontrada con token: {token}")
+        
+        # Extraer datos
+        respuesta = json.loads(transaccion.respuesta)
+        sucursal_id = respuesta.get('sucursal_id')
+        cantidad = int(respuesta.get('cantidad', 0))
+        
+        print(f"Transacción encontrada: ID={transaccion.id}, Sucursal={sucursal_id}, Cantidad={cantidad}")
+        
+        # DESCONTAR STOCK SOLO SI NO ESTÁ YA AUTORIZADA
+        if transaccion.status != 'AUTHORIZED':
+            try:
+                if sucursal_id == "casa_matriz":
+                    casa_matriz = CasaMatriz.query.first()
+                    if casa_matriz and casa_matriz.cantidad >= cantidad:
+                        casa_matriz.cantidad -= cantidad
+                        print(f"Stock casa matriz descontado: {casa_matriz.cantidad}")
+                else:
+                    sucursal = Sucursal.query.get(int(sucursal_id))
+                    if sucursal and sucursal.cantidad >= cantidad:
+                        sucursal.cantidad -= cantidad
+                        print(f"Stock sucursal {sucursal.id} descontado: {sucursal.cantidad}")
+                
+                # Actualizar transacción
+                transaccion.status = 'AUTHORIZED'
+                transaccion.respuesta = json.dumps({
+                    "status": "AUTHORIZED",
+                    "amount": transaccion.amount,
+                    "authorization_code": "123456",
+                    "sucursal_id": sucursal_id,
+                    "cantidad": cantidad,
+                    "token": token
+                })
+                db.session.commit()
+            except Exception as e:
+                print(f"ERROR AL DESCONTAR STOCK: {str(e)}")
+                traceback.print_exc()
+        
+        return type('obj', (object,), {
+            'status': 'AUTHORIZED',
+            'amount': transaccion.amount,
+            'authorization_code': '123456'
+        })
 
+# Inicialización de webpay_transaction (IMPORTANTE: debe definirse ANTES de las rutas)
+if os.getenv('MOCK_TRANSBANK', 'false').lower() == 'true':
+    webpay_transaction = MockTransaction()
+    print("\n--- MODO MOCK ACTIVADO ---\n")
+else:
+    class WebpayOptions(BaseOptions):
+        def header_api_key_name(self):
+            return "Tbk-Api-Key-Secret"
+        def header_commerce_code_name(self):
+            return "Tbk-Api-Key-Id"
 
+    webpay_options = WebpayOptions(
+        commerce_code="597055555532",
+        api_key="579B532A7440BB0C9079DED94D31EA1615BACEB56610332264630D42D0A36B1C", 
+        integration_type=IntegrationType.TEST
+    )
+    webpay_transaction = Transaction(webpay_options)
+    print("\n--- MODO REAL ACTIVADO ---\n")
+
+# ======================================================
+# CONFIGURACIÓN ADICIONAL
+# ======================================================
 # Crear tablas si no existen
 with app.app_context():
     db.create_all()
-    
-@app.route('/mock-pago-exitoso')
-def mock_pago_exitoso():
-    return '''
-    <html>
-        <body style="padding: 20px; font-family: Arial;">
-            <h2>Pago Simulado Exitoso</h2>
-            <p>¡Transacción completada correctamente!</p>
-            <p>Token: mock_token_123</p>
-            <p><a href="/venta-exitosa?token=mock_token_123">Continuar</a></p>
-        </body>
-    </html>
-    '''
 
-# Rutas principales (mantener igual hasta webpay)
+# Filtro para deserializar JSON en plantillas
+app.jinja_env.filters['fromjson'] = lambda s: json.loads(s)
+
+# ======================================================
+# RUTAS DE LA APLICACIÓN
+# ======================================================
 @app.route('/')
 def index():
     return render_template('index.html')
@@ -165,172 +227,118 @@ def vender():
         db.session.rollback()
         return jsonify({"error": str(e)}), 500
 
-# Nuevas rutas Webpay (actualizadas para SDK 6.x)
+# ======================================================
+# RUTAS DE INTEGRACIÓN TRANSBANK
+# ======================================================
+@app.route('/mock-pago-exitoso')
+def mock_pago_exitoso():
+    token = request.args.get('token', 'mock_token_123')
+    return f'''
+    <html>
+        <body style="padding: 20px; font-family: Arial;">
+            <h2>Pago Simulado Exitoso</h2>
+            <p>¡Transacción completada correctamente!</p>
+            <p>Token: {token}</p>
+            <p><a href="/webpay/confirmar?token_ws={token}">Continuar</a></p>
+        </body>
+    </html>
+    '''
+
+
 @app.route('/webpay/iniciar', methods=['POST'])
 def webpay_iniciar():
     try:
-        if not request.is_json:
-            return jsonify({"error": "Solicitud debe ser JSON"}), 400
-
-        data = request.get_json()
-        amount = float(data.get('total', 0))
-
-        if amount <= 0:
-            return jsonify({"error": "Monto inválido"}), 400
-
+        data = request.json
+        amount = float(data.get('total'))
+        sucursal_id = data.get('sucursal_id')
+        cantidad = int(data.get('cantidad', 0))
+        
         buy_order = str(int(datetime.now().timestamp()))
-        session_id = f"sesion_{buy_order}"
-        return_url = url_for('webpay_confirmar', _external=True, _scheme='http')
+        session_id = "sesion_" + buy_order
+        return_url = url_for('webpay_confirmar', _external=True)
 
-        # Solo debug en modo real
-        if os.getenv('MOCK_TRANSBANK', 'false').lower() != 'true':
-            print("\n--- Parámetros enviados a Transbank ---")
-            print(f"Commerce Code: {webpay_options.commerce_code}")
-            print(f"API Key: {webpay_options.api_key}")
-            print(f"Amount: {amount}")
-            print(f"Return URL: {return_url}\n")
-
+        print(f"\n--- Iniciando transacción ---")
+        print(f"Monto: {amount}")
+        print(f"Sucursal: {sucursal_id}")
+        print(f"Cantidad: {cantidad}")
+        
+        # Usar la implementación de webpay_transaction
         response = webpay_transaction.create(
             buy_order=buy_order,
             session_id=session_id,
             amount=amount,
             return_url=return_url
         )
-
-        # Guardar en base de datos
-        transaccion = Transaccion(
-            buy_order=buy_order,
-            amount=amount,
-            status='INICIADA',
-            respuesta=json.dumps({  # Serializa el diccionario
-                "token": "mock_token_123",
-                "url": url_for('mock_pago_exitoso', _external=True)
-            }),
-            fecha=datetime.now()
-        )
-        db.session.add(transaccion)
-        db.session.commit()
-
+        
         return jsonify({
             "url": response.url,
             "token": response.token
         })
 
     except Exception as e:
-        print("\n--- Error detallado ---")
-        print("Tipo:", type(e))
-        print("Mensaje:", str(e))
-        print("Traceback:", traceback.format_exc())
-        return jsonify({"error": "Error al procesar la transacción"}), 500
-
-
-
+        print(f"Error en iniciar: {str(e)}")
+        traceback.print_exc()
+        return jsonify({"error": str(e)}), 500
 
 @app.route('/webpay/confirmar', methods=['GET'])
 def webpay_confirmar():
-    token = request.args.get('token_ws')
     try:
-        response = webpay_transaction.commit(token)
+        token = request.args.get('token_ws', 'mock_token_123')
+        print(f"\n--- Confirmando transacción con token: {token} ---")
         
-        transaccion = Transaccion.query.filter_by(buy_order=response.buy_order).first()
-        if transaccion:
-            transaccion.status = response.status
-            transaccion.respuesta = {
-                "vci": response.vci,
-                "amount": response.amount,
-                "status": response.status,
-                "buy_order": response.buy_order,
-                "session_id": response.session_id,
-                "card_number": response.card_detail.card_number if response.card_detail else None,
-                "authorization_code": response.authorization_code
-            }
-            db.session.commit()
-
+        # Delegar al commit de webpay_transaction
+        response = webpay_transaction.commit(token)
+        print(f"Transacción confirmada: {response.status}")
+        
         return redirect(url_for('venta_exitosa', token=token))
 
     except Exception as e:
+        print(f"Error en confirmar: {str(e)}")
+        traceback.print_exc()
         return redirect(url_for('venta_fallida', error=str(e)))
 
 @app.route('/venta-exitosa')
 def venta_exitosa():
     token = request.args.get('token')
+    print(f"\n--- Venta exitosa con token: {token} ---")
     
-    # Consulta usando JSON_EXTRACT de SQLite
-    transacciones = Transaccion.query.all()
+    # Buscar solo la transacción más reciente con ese token
+    transacciones = Transaccion.query.filter(
+        Transaccion.fecha > datetime.now().replace(hour=0, minute=0, second=0)
+    ).order_by(Transaccion.fecha.desc()).all()
+    
     for t in transacciones:
-        respuesta = json.loads(t.respuesta)  # Deserializa
-        if respuesta.get('token') == token:
-            return render_template('exito.html', transaccion=t, respuesta=respuesta)
+        try:
+            respuesta = json.loads(t.respuesta)
+            if respuesta.get('token') == token:
+                print(f"Transacción encontrada: ID={t.id}, Estado={t.status}")
+                
+                # Verificar que tenga los datos necesarios
+                if 'sucursal_id' not in respuesta or 'cantidad' not in respuesta:
+                    print(f"Transacción {t.id} sin datos completos, continuando...")
+                    continue
+                    
+                # Acceder con seguridad a los datos
+                sucursal_id = respuesta.get('sucursal_id')
+                print(f"Sucursal afectada: {sucursal_id}")
+                
+                return render_template('exito.html', transaccion=t, respuesta=respuesta)
+        except Exception as e:
+            print(f"Error procesando transacción {t.id}: {str(e)}")
+            continue
     
-    return redirect(url_for('venta_fallida', error="Transacción no encontrada"))
+    return redirect(url_for('venta_fallida', error="Transacción no encontrada o datos incompletos"))
 
 @app.route('/venta-fallida')
 def venta_fallida():
     error = request.args.get('error', 'Error desconocido')
     return render_template('error.html', error=error)
 
+# ======================================================
+# INICIO DE LA APLICACIÓN
+# ======================================================
 if __name__ == '__main__':
     app.run(debug=True)
 
-class MockTransaction:
-    def create(self, buy_order, session_id, amount, return_url):
-        # Crear transacción con estructura realista
-        transaccion = Transaccion(
-            buy_order=buy_order,
-            amount=amount,
-            status='INICIADA',
-            respuesta=json.dumps({
-                "token": "mock_token_123",
-                "url": url_for('mock_pago_exitoso', _external=True)
-            }),
-            fecha=datetime.now()
-        )
-        db.session.add(transaccion)
-        db.session.commit()
-        
-        return type('obj', (object,), {
-            'token': 'mock_token_123',
-            'url': url_for('mock_pago_exitoso', _external=True)
-        })
-    
-    def commit(self, token):
-        # Actualizar transacción mock como exitosa
-        transaccion = Transaccion.query.filter_by(respuesta={'token': 'mock_token_123'}).first()
-        transaccion.status = 'AUTHORIZED'
-        transaccion.respuesta = {
-            "status": "AUTHORIZED",
-            "amount": transaccion.amount,
-            "authorization_code": "123456"
-        }
-        db.session.commit()
-        
-        return type('obj', (object,), {
-            'status': 'AUTHORIZED',
-            'amount': transaccion.amount,
-            'authorization_code': '123456'
-        })
-
-# Selección automática del mock según variable de entorno
-if os.getenv('MOCK_TRANSBANK', 'false').lower() == 'true':
-    webpay_transaction = MockTransaction()
-    print("\n--- MODO MOCK TRANSBANK ACTIVADO ---\n")
-else:
-    # Aquí iría la configuración real de Transbank (cuando la red funcione)
-    from transbank.common.options import Options as BaseOptions
-    from transbank.common.integration_type import IntegrationType
-    from transbank.webpay.webpay_plus.transaction import Transaction
-
-    class WebpayOptions(BaseOptions):
-        def header_api_key_name(self):
-            return "Tbk-Api-Key-Secret"
-        def header_commerce_code_name(self):
-            return "Tbk-Api-Key-Id"
-
-    webpay_options = WebpayOptions(
-        commerce_code="597055555532",
-        api_key="579B532A7440BB0C9079DED94D31EA1615BACEB56610332264630D42D0A36B1C",
-        integration_type=IntegrationType.TEST
-    )
-    webpay_transaction = Transaction(webpay_options)
 
 
