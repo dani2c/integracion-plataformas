@@ -3,11 +3,12 @@ import json
 import traceback
 import requests
 from datetime import datetime
-from flask import Flask, jsonify, request, render_template, url_for, redirect
+from flask import Flask, jsonify, request, render_template, url_for, redirect, Response
 from flask_sqlalchemy import SQLAlchemy
 from transbank.common.options import Options as BaseOptions
 from transbank.common.integration_type import IntegrationType
 from transbank.webpay.webpay_plus.transaction import Transaction
+import queue
 
 # ======================================================
 # CONFIGURACIÓN INICIAL DE FLASK
@@ -22,6 +23,9 @@ app.config['SQLALCHEMY_DATABASE_URI'] = 'sqlite:///' + db_path
 
 app.config['SQLALCHEMY_TRACK_MODIFICATIONS'] = False
 db = SQLAlchemy(app)
+
+# Cola para comunicar eventos de stock entre las peticiones
+notifications_queue = queue.Queue()
 
 # ======================================================
 # MODELOS DE BASE DE DATOS
@@ -87,31 +91,33 @@ class MockTransaction:
         cantidad = int(respuesta.get('cantidad', 0))
 
         try:
+            stock_afectado = {}
             if sucursal_id == "casa_matriz":
                 casa_matriz = CasaMatriz.query.first()
                 if casa_matriz.cantidad < cantidad:
                     raise Exception("Stock insuficiente en Casa Matriz")
                 casa_matriz.cantidad -= cantidad
+                stock_afectado = {"id": "casa_matriz", "cantidad": casa_matriz.cantidad, "nombre": "Casa Matriz"}
             else:
                 sucursal = Sucursal.query.get(int(sucursal_id))
                 if not sucursal or sucursal.cantidad < cantidad:
                     raise Exception("Stock insuficiente o sucursal inexistente")
                 sucursal.cantidad -= cantidad
+                stock_afectado = {"id": f"sucursal_{sucursal.id}", "cantidad": sucursal.cantidad, "nombre": sucursal.nombre}
 
             transaccion.status = 'AUTHORIZED'
             transaccion.respuesta = json.dumps({
-                "status": "AUTHORIZED",
-                "amount": transaccion.amount,
-                "authorization_code": "123456",
-                "sucursal_id": sucursal_id,
-                "cantidad": cantidad,
-                "token": token
+                "status": "AUTHORIZED", "amount": transaccion.amount, "authorization_code": "123456",
+                "sucursal_id": sucursal_id, "cantidad": cantidad, "token": token
             })
             db.session.commit()
 
+            # Poner el evento en la cola para notificar a los clientes vía SSE
+            if stock_afectado:
+                notifications_queue.put(stock_afectado)
+
             return type('obj', (object,), {
-                'status': 'AUTHORIZED',
-                'url': url_for('venta_exitosa', token=token, _external=True)
+                'status': 'AUTHORIZED', 'url': url_for('venta_exitosa', token=token, _external=True)
             })
 
         except Exception as e:
@@ -229,6 +235,23 @@ def vender():
         return jsonify({"error": str(e)}), 500
 
 # ======================================================
+# ENDPOINT PARA SERVER-SENT EVENTS (SSE)
+# ======================================================
+@app.route('/api/stock-stream')
+def stock_stream():
+    def event_stream():
+        while True:
+            try:
+                # Esperar a que llegue un mensaje a la cola (con timeout)
+                message = notifications_queue.get(timeout=25)
+                # Enviar el evento en formato SSE
+                yield f"data: {json.dumps(message)}\n\n"
+            except queue.Empty:
+                # Enviar un comentario para mantener la conexión viva
+                yield ": keep-alive\n\n"
+    return Response(event_stream(), mimetype='text/event-stream')
+
+# ======================================================
 # RUTAS TRANSBANK
 # ======================================================
 @app.route('/mock-pago-exitoso')
@@ -250,9 +273,8 @@ def webpay_iniciar():
     try:
         data = request.json
         amount = float(data.get('total'))
-        sucursal_id = data.get('sucursal_id')
-        cantidad = int(data.get('cantidad', 0))
-
+        # La sucursal_id y cantidad se recuperarán en el commit desde la DB
+        
         buy_order = str(int(datetime.now().timestamp()))
         session_id = "sesion_" + buy_order
         return_url = url_for('webpay_confirmar', _external=True)
