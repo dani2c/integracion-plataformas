@@ -1,5 +1,9 @@
 Flask==3.0.0
 Flask-SQLAlchemy==3.1.1
 transbank-sdk==6.0.0
+grpcio
+grpcio-tools
+protobuf
+requests
 
-set MOCK_TRANSBANK=true para activar el modo mock de transbank
+

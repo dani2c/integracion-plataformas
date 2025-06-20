@@ -1,0 +1,50 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Ingresar Nuevo Producto</title>
+    <link rel="stylesheet" href="{{ url_for('static', filename='styles/styles.css') }}">
+    <style>
+        .alert { padding: 15px; margin-bottom: 20px; border: 1px solid transparent; border-radius: 4px; }
+        .alert-success { color: #155724; background-color: #d4edda; border-color: #c3e6cb; }
+        .alert-danger { color: #721c24; background-color: #f8d7da; border-color: #f5c6cb; }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <h2>Ingresar Nuevo Producto (vía gRPC)</h2>
+
+        <!-- Aquí se mostrarán los mensajes de éxito o error -->
+        {% with messages = get_flashed_messages(with_categories=true) %}
+            {% if messages %}
+                {% for category, message in messages %}
+                    <div class="alert alert-{{ category }}">{{ message }}</div>
+                {% endfor %}
+            {% endif %}
+        {% endwith %}
+
+        <!-- 'enctype' es VITAL para poder subir archivos -->
+        <form method="POST" enctype="multipart/form-data">
+            <label for="nombre">Nombre del Producto:</label>
+            <input type="text" id="nombre" name="nombre" required>
+
+            <label for="descripcion">Descripción:</label>
+            <textarea id="descripcion" name="descripcion" rows="3"></textarea>
+
+            <label for="precio">Precio:</label>
+            <input type="number" id="precio" name="precio" step="0.01" min="0" required>
+
+            <label for="stock_inicial">Stock Inicial:</label>
+            <input type="number" id="stock_inicial" name="stock_inicial" min="0" required>
+
+            <label for="foto">Foto del Producto:</label>
+            <input type="file" id="foto" name="foto" accept="image/*" required>
+
+            <button type="submit">Guardar Producto</button>
+        </form>
+        <br>
+        <a href="{{ url_for('index') }}" class="btn-volver">Volver al Inicio</a>
+    </div>
+</body>
+</html>
