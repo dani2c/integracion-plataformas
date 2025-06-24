@@ -1,5 +1,5 @@
 document.addEventListener('DOMContentLoaded', function() {
-    // Referencias a elementos del DOM
+    
     const sucursalesContainer = document.getElementById('sucursales-container');
     const casaMatrizContainer = document.getElementById('casa-matriz-container');
     const sucursalSelect = document.getElementById('sucursal');
@@ -9,9 +9,9 @@ document.addEventListener('DOMContentLoaded', function() {
     const totalClpSpan = document.getElementById('total');
     const totalUsdSpan = document.getElementById('totalUSD');
     
-    let inventarioData = {}; // Para guardar los datos del inventario y acceder a ellos fácilmente
+    let inventarioData = {}; 
 
-    // Función para cargar el inventario desde la API
+    
     async function cargarInventario() {
         try {
             const response = await fetch('/api/inventario');
@@ -25,18 +25,18 @@ document.addEventListener('DOMContentLoaded', function() {
         }
     }
 
-    // Función para dibujar el inventario en el HTML
+    
     function renderizarInventario() {
-        // Limpiar contenedores y selector
+        
         sucursalesContainer.innerHTML = '';
         casaMatrizContainer.innerHTML = '';
         sucursalSelect.innerHTML = '';
 
-        // Renderizar sucursales
+        
         inventarioData.sucursales.forEach(s => {
             const sucursalDiv = document.createElement('div');
             sucursalDiv.className = 'sucursal-item';
-            // Añadimos un ID único al span de la cantidad para poder actualizarlo
+            
             sucursalDiv.innerHTML = `
                 <strong>${s.nombre}</strong>
                 <p>Cantidad: <span id="stock-sucursal_${s.id}">${s.cantidad}</span></p>
@@ -50,9 +50,9 @@ document.addEventListener('DOMContentLoaded', function() {
             sucursalSelect.appendChild(option);
         });
 
-        // Renderizar Casa Matriz
+        
         const cm = inventarioData.casa_matriz;
-        // Añadimos un ID único al span de la cantidad
+        
         casaMatrizContainer.innerHTML = `
             <p>Cantidad: <span id="stock-casa_matriz">${cm.cantidad}</span></p>
             <p>Precio: $${cm.precio}</p>
@@ -63,7 +63,7 @@ document.addEventListener('DOMContentLoaded', function() {
         sucursalSelect.appendChild(optionCm);
     }
     
-    // Función para conectar al stream de eventos del servidor (SSE)
+    
     function conectarSSE() {
         console.log("Conectando al stream de eventos de stock (SSE)...");
         const eventSource = new EventSource("/api/stock-stream");
@@ -72,20 +72,20 @@ document.addEventListener('DOMContentLoaded', function() {
             const stockUpdate = JSON.parse(event.data);
             console.log("SSE Recibido:", stockUpdate);
 
-            // Buscar el elemento del DOM por su ID único
+            
             const stockElement = document.getElementById(`stock-${stockUpdate.id}`);
 
             if (stockElement) {
-                // Actualizar la cantidad en la interfaz
+                
                 stockElement.textContent = stockUpdate.cantidad;
                 
-                // Aplicar un efecto visual para resaltar el cambio
+                
                 stockElement.classList.add('stock-updated');
                 
-                // Mostrar una alerta al usuario
+                
                 alert(`¡Alerta de Stock! El inventario de '${stockUpdate.nombre}' ha cambiado a ${stockUpdate.cantidad}.`);
 
-                // Quitar el efecto visual después de un momento
+                
                 setTimeout(() => {
                     stockElement.classList.remove('stock-updated');
                 }, 1500);
@@ -95,12 +95,12 @@ document.addEventListener('DOMContentLoaded', function() {
         eventSource.onerror = function(err) {
             console.error("Error en la conexión EventSource. Intentando reconectar...", err);
             eventSource.close();
-            // Opcional: intentar reconectar manualmente después de un tiempo
+            
             setTimeout(conectarSSE, 5000); 
         };
     }
 
-    // Lógica de los botones
+    
     calcularBtn.addEventListener('click', async () => {
         const selectedId = sucursalSelect.value;
         const cantidad = parseInt(cantidadInput.value, 10);
@@ -158,7 +158,7 @@ document.addEventListener('DOMContentLoaded', function() {
             });
             const data = await response.json();
             if (data.url) {
-                // Redirigir al usuario a la página de pago de Transbank
+                
                 window.location.href = data.url;
             } else {
                 throw new Error(data.error || 'Error desconocido al iniciar la venta.');
@@ -169,7 +169,6 @@ document.addEventListener('DOMContentLoaded', function() {
         }
     });
 
-    // Iniciar todo
     cargarInventario();
     conectarSSE();
 });

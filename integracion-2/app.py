@@ -4,16 +4,13 @@ import json
 import traceback
 import queue
 import grpc
+import requests
 from datetime import datetime
 
-# --- INICIO DE LA CORRECCIÓN ---
-# Añadir el directorio raíz y el de grpc_files al 'path' de Python.
-# Esto soluciona el 'ModuleNotFoundError' al ejecutar 'python app.py'.
 PROJECT_ROOT = os.path.abspath(os.path.dirname(__file__))
 sys.path.append(PROJECT_ROOT)
 GRPC_FILES_PATH = os.path.join(PROJECT_ROOT, 'grpc_files')
 sys.path.append(GRPC_FILES_PATH)
-# --- FIN DE LA CORRECCIÓN ---
 
 
 from flask import Flask, jsonify, request, render_template, url_for, redirect, Response, flash
@@ -21,63 +18,48 @@ from transbank.common.integration_type import IntegrationType
 from transbank.common.options import Options as BaseOptions
 from transbank.webpay.webpay_plus.transaction import Transaction
 
-# --- Ahora las importaciones funcionarán ---
 from models import db, Sucursal, CasaMatriz, Transaccion, Producto
 from grpc_files import producto_pb2
 from grpc_files import producto_pb2_grpc
 
-
-# --- CONFIGURACIÓN DE FLASK ---
 app = Flask(__name__)
 basedir = os.path.abspath(os.path.dirname(__file__))
 db_path = os.path.join(basedir, 'instance', 'inventario_db.db')
 os.makedirs(os.path.dirname(db_path), exist_ok=True)
 app.config['SQLALCHEMY_DATABASE_URI'] = 'sqlite:///' + db_path
 app.config['SQLALCHEMY_TRACK_MODIFICATIONS'] = False
-# ¡IMPORTANTE! Reemplaza esto con tu llave secreta.
-app.config['SECRET_KEY'] = 'd47505ab14335c70e6e34498389441c9' 
+app.config['SECRET_KEY'] = 'd47505ab14335c70e6e34498389441c9' # ¡Usa tu propia llave!
 
 db.init_app(app)
 notifications_queue = queue.Queue()
 
-
-# ======================================================
-# CLASE MOCK DE TRANSBANK
-# ======================================================
 class MockTransaction:
     def create(self, buy_order, session_id, amount, return_url):
         data = request.get_json()
-        sucursal_id = data.get('sucursal_id')
-        cantidad = int(data.get('cantidad', 0))
+        sucursal_id, cantidad = data.get('sucursal_id'), int(data.get('cantidad', 0))
         unique_token = f"mock_token_{buy_order}"
         transaccion = Transaccion(
             buy_order=buy_order, amount=amount, status='INICIADA',
-            respuesta=json.dumps({
-                "token": unique_token, "url": url_for('mock_pago_exitoso', token=unique_token, _external=True),
-                "sucursal_id": sucursal_id, "cantidad": cantidad
-            }), fecha=datetime.now()
+            respuesta=json.dumps({"token": unique_token, "url": url_for('mock_pago_exitoso', token=unique_token, _external=True), "sucursal_id": sucursal_id, "cantidad": cantidad}),
+            fecha=datetime.now()
         )
         db.session.add(transaccion)
         db.session.commit()
         return type('obj', (object,), {'token': unique_token, 'url': url_for('mock_pago_exitoso', token=unique_token, _external=True)})
-
     def commit(self, token):
         transaccion = Transaccion.query.filter(Transaccion.respuesta.like(f'%{token}%')).first()
-        if not transaccion: raise Exception(f"Transacción no encontrada con token: {token}")
+        if not transaccion: raise Exception(f"Transacción no encontrada: {token}")
         respuesta = json.loads(transaccion.respuesta)
         sucursal_id, cantidad = respuesta.get('sucursal_id'), int(respuesta.get('cantidad', 0))
         try:
-            stock_afectado = {}
             if sucursal_id == "casa_matriz":
                 entidad = CasaMatriz.query.first()
                 if entidad.cantidad < cantidad: raise Exception("Stock insuficiente en Casa Matriz")
-                entidad.cantidad -= cantidad
-                stock_afectado = {"id": "casa_matriz", "cantidad": entidad.cantidad, "nombre": "Casa Matriz"}
             else:
                 entidad = Sucursal.query.get(int(sucursal_id))
                 if not entidad or entidad.cantidad < cantidad: raise Exception("Stock insuficiente o sucursal inexistente")
-                entidad.cantidad -= cantidad
-                stock_afectado = {"id": f"sucursal_{entidad.id}", "cantidad": entidad.cantidad, "nombre": entidad.nombre}
+            entidad.cantidad -= cantidad
+            stock_afectado = {"id": f"sucursal_{entidad.id}" if sucursal_id != "casa_matriz" else "casa_matriz", "cantidad": entidad.cantidad, "nombre": entidad.nombre if sucursal_id != "casa_matriz" else "Casa Matriz"}
             transaccion.status = 'AUTHORIZED'
             transaccion.respuesta = json.dumps({"status": "AUTHORIZED", "amount": transaccion.amount, "authorization_code": "123456", "sucursal_id": sucursal_id, "cantidad": cantidad, "token": token})
             db.session.commit()
@@ -93,16 +75,11 @@ if os.getenv('MOCK_TRANSBANK', 'true').lower() == 'true':
     webpay_transaction = MockTransaction()
 else:
     pass
-
-# ... (El resto de la configuración)
 with app.app_context():
     db.create_all()
 app.jinja_env.filters['fromjson'] = lambda s: json.loads(s)
 
 
-# ======================================================
-# RUTAS DE LA INTERFAZ DE USUARIO
-# ======================================================
 @app.route('/')
 def index():
     return render_template('index.html')
@@ -124,19 +101,14 @@ def ingresar_producto():
                 stub = producto_pb2_grpc.ProductoServiceStub(channel)
                 peticion = producto_pb2.ProductoRequest(nombre=nombre, descripcion=descripcion, precio=precio, stock_inicial=stock_inicial, foto=foto_bytes)
                 respuesta = stub.IngresarProducto(peticion)
-                if respuesta.exito:
-                    flash(respuesta.mensaje, 'success')
-                else:
-                    flash(f'Error desde gRPC: {respuesta.mensaje}', 'danger')
+                if respuesta.exito: flash(respuesta.mensaje, 'success')
+                else: flash(f'Error desde gRPC: {respuesta.mensaje}', 'danger')
         except Exception as e:
             flash(f'Error en el cliente Flask: {str(e)}', 'danger')
         return redirect(url_for('ingresar_producto'))
     return render_template('ingresar_producto.html')
 
 
-# ======================================================
-# RUTAS DE API Y EVENTOS (SSE)
-# ======================================================
 @app.route('/api/inventario', methods=['GET'])
 def get_inventario():
     sucursales = Sucursal.query.all()
@@ -145,6 +117,42 @@ def get_inventario():
         "sucursales": [{"id": s.id, "nombre": s.nombre, "cantidad": s.cantidad, "precio": s.precio} for s in sucursales],
         "casa_matriz": {"cantidad": casa_matriz.cantidad, "precio": casa_matriz.precio} if casa_matriz else {"cantidad": 0, "precio": 0}
     })
+
+
+@app.route('/api/transformar_usd', methods=['POST'])
+def transformar_usd():
+    try:
+        data = request.json
+        precio_clp = data.get('precio_clp', 0)
+        
+        
+        api_url = "https://open.er-api.com/v6/latest/USD"
+        
+        response = requests.get(api_url)
+        response.raise_for_status() 
+        data_api = response.json()
+        
+        if data_api.get("result") == "success":
+            
+            valor_dolar = data_api.get("rates", {}).get("CLP")
+            
+            if valor_dolar is None:
+                raise Exception("La API no devolvió la tasa de cambio para CLP.")
+            
+            
+            precio_usd = round(precio_clp / valor_dolar, 2)
+    
+            return jsonify({
+                "precio_usd": precio_usd,
+                "tasa_actual": valor_dolar
+            })
+        else:
+            raise Exception("La API de conversión de moneda reportó un error.")
+
+    except Exception as e:
+        print(f"Error en transformar_usd: {e}")
+        
+        return jsonify({"error": str(e), "precio_usd": "Error"}), 500
 
 @app.route('/api/stock-stream')
 def stock_stream():
@@ -158,16 +166,10 @@ def stock_stream():
     return Response(event_stream(), mimetype='text/event-stream')
 
 
-# ======================================================
-# RUTAS TRANSBANK
-# ======================================================
 @app.route('/mock-pago-exitoso')
 def mock_pago_exitoso():
     token = request.args.get('token', 'mock_token_123')
-    return f'''
-    <html><body style="padding: 20px; font-family: Arial;"><h2>Procesando Pago...</h2>
-    <script>window.location.href = "/webpay/confirmar?token_ws={token}";</script>
-    </body></html>'''
+    return f'<html><body><h2>Procesando...</h2><script>window.location.href="/webpay/confirmar?token_ws={token}";</script></body></html>'
 
 @app.route('/webpay/iniciar', methods=['POST'])
 def webpay_iniciar():
@@ -177,12 +179,9 @@ def webpay_iniciar():
         buy_order = str(int(datetime.now().timestamp()))
         session_id = "sesion_" + buy_order
         return_url = url_for('webpay_confirmar', _external=True)
-        response = webpay_transaction.create(
-            buy_order=buy_order, session_id=session_id, amount=amount, return_url=return_url
-        )
+        response = webpay_transaction.create(buy_order=buy_order, session_id=session_id, amount=amount, return_url=return_url)
         return jsonify({"url": response.url, "token": response.token})
     except Exception as e:
-        traceback.print_exc()
         return jsonify({"error": str(e)}), 500
 
 @app.route('/webpay/confirmar')
@@ -198,8 +197,7 @@ def webpay_confirmar():
 def venta_exitosa():
     token = request.args.get('token')
     transaccion = Transaccion.query.filter(Transaccion.respuesta.like(f'%{token}%')).first()
-    if not transaccion:
-        return redirect(url_for('venta_fallida', error="Transacción no encontrada"))
+    if not transaccion: return redirect(url_for('venta_fallida', error="Transacción no encontrada"))
     respuesta = json.loads(transaccion.respuesta)
     return render_template('exito.html', transaccion=transaccion, respuesta=respuesta)
 
@@ -209,9 +207,6 @@ def venta_fallida():
     return render_template('error.html', error=error)
 
 
-# ======================================================
-# INICIO DE LA APLICACIÓN
-# ======================================================
 if __name__ == '__main__':
     with app.app_context():
         db.create_all()

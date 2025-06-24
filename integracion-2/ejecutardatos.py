@@ -1,15 +1,16 @@
+from ssl import Options
 from transbank.webpay.webpay_plus.transaction import Transaction
 from transbank.common.options import Options as BaseOptions
 from transbank.common.integration_type import IntegrationType
 
 
-# 1. Crea una subclase que implemente los métodos abstractos
+
 class WebpayOptions(BaseOptions):
     def header_api_key_name(self):
-        return "Tbk-Api-Key-Secret"  # Nombre del header para la API Key
+        return "Tbk-Api-Key-Secret"  
     
     def header_commerce_code_name(self):
-        return "Tbk-Api-Key-Id"  # Nombre del header para el código de comercio
+        return "Tbk-Api-Key-Id"  
 
 options = Options(
     commerce_code="597055555532",
