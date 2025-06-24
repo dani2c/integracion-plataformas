@@ -15,7 +15,7 @@
     <div class="container">
         <h2>Ingresar Nuevo Producto (vía gRPC)</h2>
 
-        <!-- Aquí se mostrarán los mensajes de éxito o error -->
+
         {% with messages = get_flashed_messages(with_categories=true) %}
             {% if messages %}
                 {% for category, message in messages %}
@@ -24,7 +24,7 @@
             {% endif %}
         {% endwith %}
 
-        <!-- 'enctype' es VITAL para poder subir archivos -->
+
         <form method="POST" enctype="multipart/form-data">
             <label for="nombre">Nombre del Producto:</label>
             <input type="text" id="nombre" name="nombre" required>

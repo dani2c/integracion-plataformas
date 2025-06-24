@@ -49,7 +49,7 @@ button:hover {
     font-size: 1.1em;
 }
 
-/* Agrega al final de tu archivo styles.css */
+
 .success-message {
     background: #e8f5e9;
     border-left: 4px solid #4CAF50;
@@ -122,10 +122,10 @@ button:hover {
     margin-top: 15px;
 }
 
-/* --- AÑADIR ESTO A TU ARCHIVO CSS --- */
+
 
 .stock-updated {
-  color: #d9534f; /* Un color rojo para la alerta */
+  color: #d9534f; 
   font-weight: bold;
   transform: scale(1.2);
   transition: transform 0.2s ease-in-out, color 0.2s ease;

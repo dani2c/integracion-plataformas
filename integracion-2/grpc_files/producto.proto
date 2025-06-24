@@ -2,12 +2,12 @@ syntax = "proto3";
 
 package producto;
 
-// El servicio que define las funciones remotas
+
 service ProductoService {
   rpc IngresarProducto(ProductoRequest) returns (ProductoResponse) {}
 }
 
-// El mensaje que el cliente envía
+
 message ProductoRequest {
   string nombre = 1;
   string descripcion = 2;
@@ -16,7 +16,7 @@ message ProductoRequest {
   bytes foto = 5; // Para los bytes de la imagen
 }
 
-// La respuesta que el servidor devuelve
+
 message ProductoResponse {
   bool exito = 1;
   string mensaje = 2;
